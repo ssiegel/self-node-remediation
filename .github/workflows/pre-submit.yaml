@@ -2,12 +2,10 @@ name: Pre Submit # workflow name
 on: # on events
   push:
     branches:
-      - main
-      - release-*
+      - this-workflow-is-disabled-in-fork
   pull_request:
     branches:
-      - main
-      - release-*
+      - this-workflow-is-disabled-in-fork
 jobs:
   build:
     name: build

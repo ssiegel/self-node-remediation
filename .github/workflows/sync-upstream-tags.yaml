@@ -1,0 +1,102 @@
+name: Sync Upstream Tags
+
+# Fetches new upstream tags, applies our local patch commits on top of each
+# one, and pushes the patched tags to the fork. The tag push then triggers
+# build-image.yaml normally, since the patched commit contains workflow files.
+#
+# This assumes a rebasing workflow: main is always upstream/main with our
+# patch commits on top (no merge commits). The patches are cherry-picked from
+# main onto each upstream tag.
+#
+# Prerequisites:
+#   A PAT with 'contents: write' scope must be stored as the repository
+#   secret SYNC_TOKEN. This is required because GitHub Actions does not
+#   trigger downstream workflow runs from pushes made with GITHUB_TOKEN.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # every Monday at 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout main
+      uses: actions/checkout@v4
+      with:
+        ref: main
+        fetch-depth: 0
+        fetch-tags: true
+        # Use the PAT so that the tag pushes below trigger build-image.yaml
+        token: ${{ secrets.SYNC_TOKEN }}
+
+    - name: Fetch upstream
+      run: |
+        git remote add upstream https://github.com/medik8s/self-node-remediation
+        # --no-tags suppresses git's auto-tag-following, which would otherwise
+        # create local refs/tags/* entries alongside our explicit mapping.
+        git fetch --no-tags upstream main
+        git fetch --no-tags upstream '+refs/tags/*:refs/remotes/upstream/tags/*'
+
+    - name: Configure git identity
+      run: |
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git config user.name "github-actions[bot]"
+
+    - name: Apply patches and push new tags
+      run: |
+        # The commit where local-patches diverges from upstream/main.
+        # All commits above this point are our patch commits.
+        FORK_POINT=$(git merge-base HEAD upstream/main)
+        echo "Fork point: $FORK_POINT"
+        PATCH_RANGE="${FORK_POINT}..origin/main"
+        echo "Patch range: $PATCH_RANGE"
+
+        # All upstream v* tags
+        UPSTREAM_TAGS=$(git for-each-ref --format='%(refname)' 'refs/remotes/upstream/tags/v*' \
+          | sed 's|refs/remotes/upstream/tags/||' | sort)
+
+        # Tags already present in the fork (already patched and pushed)
+        FORK_TAGS=$(git tag -l 'v*' | sort)
+
+        # New = present upstream but not yet in fork
+        NEW_TAGS=$(comm -23 <(echo "$UPSTREAM_TAGS") <(echo "$FORK_TAGS"))
+
+        if [ -z "$NEW_TAGS" ]; then
+          echo "No new upstream tags found."
+          exit 0
+        fi
+
+        echo "New tags to process: $NEW_TAGS"
+
+        for TAG in $NEW_TAGS; do
+          echo "==> Processing $TAG"
+
+          # Create a temporary branch at the upstream tag commit
+          git checkout -b "patched/$TAG" "refs/remotes/upstream/tags/$TAG"
+
+          # Replay our patch commits on top of the upstream tag
+          if ! git cherry-pick "${PATCH_RANGE}"; then
+            echo "ERROR: cherry-pick failed for $TAG — manual intervention required."
+            git cherry-pick --abort
+            git checkout main
+            git branch -D "patched/$TAG"
+            # Continue to attempt remaining tags rather than aborting entirely
+            continue
+          fi
+
+          # Tag this patched commit with the upstream tag name
+          git tag "$TAG"
+
+          # Push the tag — uses the PAT so build-image.yaml is triggered
+          git push origin "$TAG"
+
+          git checkout main
+          git branch -D "patched/$TAG"
+          echo "==> Pushed $TAG"
+        done
+
