@@ -1,5 +1,8 @@
 # Build the manager binary
 FROM quay.io/centos/centos:stream9 AS builder
+ARG BUILDARCH
+ARG TARGETARCH
+RUN echo "=== BUILD DEBUG: BUILDARCH=${BUILDARCH} TARGETARCH=${TARGETARCH}==="
 RUN yum install git jq -y && yum clean all
 
 WORKDIR /workspace
@@ -16,7 +19,7 @@ RUN \
     export GO_VERSION=$(grep -oE "toolchain go[[:digit:]]\.[[:digit:]]+\.[[:digit:]]" go.mod | awk '{print $2}') && \
     echo ${GO_VERSION} && \
     # find filename for latest z version from Go download page
-    export GO_FILENAME=$(curl -sL 'https://go.dev/dl/?mode=json&include=all' | jq -r "[.[] | select(.version == \"${GO_VERSION}\")][0].files[] | select(.os == \"linux\" and .arch == \"amd64\") | .filename") && \
+    export GO_FILENAME=$(curl -sL 'https://go.dev/dl/?mode=json&include=all' | jq -r "[.[] | select(.version == \"${GO_VERSION}\")][0].files[] | select(.os == \"linux\" and .arch == \"${BUILDARCH}\") | .filename") && \
     echo ${GO_FILENAME} && \
     # download and unpack
     curl -sL -o go.tar.gz "https://golang.org/dl/${GO_FILENAME}" && \
@@ -38,8 +41,8 @@ COPY controllers/ controllers/
 COPY .git/ .git/
 COPY pkg/ pkg/
 COPY install/ install/
-# Build
-RUN ./hack/build.sh
+# Build - pass TARGETARCH so build.sh can cross-compile for the correct architecture
+RUN TARGETARCH=${TARGETARCH} ./hack/build.sh
 
 FROM registry.access.redhat.com/ubi9/ubi:latest
 
