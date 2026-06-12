@@ -2,9 +2,9 @@ name: Publish Container Images
 on:
   push:
     branches:
-      - main
+      - this-workflow-is-disabled-in-fork
     tags:
-      - 'v*'
+      - this-workflow-is-disabled-in-fork
 
 jobs:
   push_to_registry:

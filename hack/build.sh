@@ -28,4 +28,6 @@ echo "cgo: ${CGO_ENABLED}"
 # export in case it was set
 export GOEXPERIMENT="${GOEXPERIMENT}"
 
-GOOS=linux GOARCH=amd64 go build -o bin/manager main.go
+# Use TARGETARCH from Docker build arg for cross-compilation; fall back to native arch
+GOARCH=${TARGETARCH:-$(go env GOARCH)}
+GOOS=linux GOARCH=${GOARCH} go build -o bin/manager main.go

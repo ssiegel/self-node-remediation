@@ -1,0 +1,49 @@
+name: Retag Latest
+
+# Runs after every Build Container Image job completes (success or failure).
+# Queries GHCR for all pushed v* tags, finds the highest semver, and moves
+# the `latest` tag to point to that image.
+#
+# Running after each build — rather than once at the end — means the final
+# state is always correct regardless of which order parallel builds finish:
+# every invocation computes the same answer (the highest available version).
+on:
+  workflow_run:
+    workflows: ["Build Container Image"]
+    types: [completed]
+
+env:
+  image: ghcr.io/${{ github.repository }}
+
+jobs:
+  retag:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    steps:
+    - name: Install crane
+      uses: imjasonh/setup-crane@v0.4
+
+    - name: Log in to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+
+    - name: Retag latest
+      run: |
+        # List all tags currently in GHCR, keep only v* ones, pick the highest
+        HIGHEST=$(crane ls "${{ env.image }}" \
+          | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+          | sort -V | tail -1)
+
+        if [ -z "$HIGHEST" ]; then
+          echo "No versioned tags found in registry yet."
+          exit 0
+        fi
+
+        echo "Tagging $HIGHEST as latest"
+        crane tag "${{ env.image }}:${HIGHEST}" latest
